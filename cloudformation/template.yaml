@@ -1,0 +1,172 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Sample for "The DevOps Agent Just Joined Your On-Call Channel" (matheusarrais.com).
+  An AWS DevOps Agent Space that monitors this account, and a private Slack channel that chats with it
+  through an IAM role you control.
+
+Parameters:
+  AgentSpaceName:
+    Type: String
+    Default: sample-oncall
+    Description: Name of the Agent Space
+  # Leave the four Slack parameters empty on the first deploy. Register Slack from the new Agent Space in the
+  # console (an OAuth flow that CloudFormation can't do), then update the stack with them to add the channel.
+  SlackServiceId:
+    Type: String
+    Default: ''
+    Description: ID of the Slack registration, from `aws devops-agent list-services --filter-service-type slack`
+    MaxLength: 255
+  SlackWorkspaceId:
+    Type: String
+    Default: ''
+    Description: Slack workspace ID, such as T0123456789
+    AllowedPattern: '^$|^[TE][A-Z0-9]+$'
+  SlackWorkspaceName:
+    Type: String
+    Default: ''
+    Description: Slack workspace name
+  SlackChannelId:
+    Type: String
+    Default: ''
+    Description: ID of the private Slack channel, such as C0123456789. Two-way chat works only in private channels
+    AllowedPattern: '^$|^[CGD][A-Z0-9]{7,15}$'
+  ChannelPolicy:
+    Type: String
+    Default: chat-only
+    AllowedValues: [chat-only, managed]
+    Description: >-
+      chat-only (default) gives the channel role a policy you own with the two actions the AWS managed policy
+      granted at launch. managed attaches AIDevOpsChannelAccessPolicy, which AWS can widen without notice.
+
+Conditions:
+  HasSlack: !Not [!Equals [!Ref SlackServiceId, '']]
+  UseManagedChannelPolicy: !Equals [!Ref ChannelPolicy, managed]
+  UseChatOnlyPolicy: !And [!Condition HasSlack, !Not [!Condition UseManagedChannelPolicy]]
+
+Resources:
+  # The role the agent uses to read this account during investigations and chat.
+  AgentSpaceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Lets AWS DevOps Agent read this account for the sample Agent Space
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: aidevops.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:${AWS::Partition}:aidevops:${AWS::Region}:${AWS::AccountId}:agentspace/*'
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AIDevOpsAgentAccessPolicy'
+      Policies:
+        - PolicyName: AllowCreateServiceLinkedRoles
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AllowResourceExplorerServiceLinkedRole
+                Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/resource-explorer-2.amazonaws.com/AWSServiceRoleForResourceExplorer'
+
+  AgentSpace:
+    Type: AWS::DevOpsAgent::AgentSpace
+    Properties:
+      Name: !Ref AgentSpaceName
+      Description: Sample Agent Space with a two-way Slack channel
+
+  MonitorThisAccount:
+    Type: AWS::DevOpsAgent::Association
+    Properties:
+      AgentSpaceId: !Ref AgentSpace
+      ServiceId: aws
+      Configuration:
+        Aws:
+          AccountId: !Ref AWS::AccountId
+          AccountType: monitor
+          AssumableRoleArn: !GetAtt AgentSpaceRole.Arn
+
+  # Version 1 of AIDevOpsChannelAccessPolicy granted only these two actions. Version 2 (2026-10-26) grants 29,
+  # including creating and deleting triggers and assets. Owning the policy means it changes only when you change it.
+  ChatOnlyPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: UseChatOnlyPolicy
+    Properties:
+      Description: Lets the Slack channel chat with this one Agent Space, and nothing else
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowChatInThisAgentSpace
+            Effect: Allow
+            Action:
+              - aidevops:CreateChat
+              - aidevops:SendMessage
+            Resource: !GetAtt AgentSpace.Arn
+            Condition:
+              StringEquals:
+                aws:ResourceAccount: !Ref AWS::AccountId
+
+  # Everyone in the private channel drives the agent through this one role.
+  ChannelRole:
+    Type: AWS::IAM::Role
+    Condition: HasSlack
+    Properties:
+      Description: Identity of the two-way Slack channel. Every member of the channel acts through it
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: aidevops.amazonaws.com
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnEquals:
+                aws:SourceArn: !GetAtt AgentSpace.Arn
+      ManagedPolicyArns:
+        - !If
+          - UseManagedChannelPolicy
+          - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AIDevOpsChannelAccessPolicy'
+          - !Ref ChatOnlyPolicy
+
+  SlackChannel:
+    Type: AWS::DevOpsAgent::Association
+    Condition: HasSlack
+    Properties:
+      AgentSpaceId: !Ref AgentSpace
+      ServiceId: !Ref SlackServiceId
+      Configuration:
+        Slack:
+          WorkspaceId: !Ref SlackWorkspaceId
+          WorkspaceName: !Ref SlackWorkspaceName
+          TransmissionTarget:
+            IncidentResponseTarget:
+              ChannelId: !Ref SlackChannelId
+          Bidirectional:
+            Enabled: true
+            RoleArn: !GetAtt ChannelRole.Arn
+
+Outputs:
+  AgentSpaceId:
+    Value: !Ref AgentSpace
+  AgentSpaceArn:
+    Value: !GetAtt AgentSpace.Arn
+  ChannelRoleArn:
+    Condition: HasSlack
+    Description: Every Slack message that drives the agent runs as this role
+    Value: !GetAtt ChannelRole.Arn
+  ChannelPolicy:
+    Condition: HasSlack
+    Value: !Ref ChannelPolicy
+  NextStep:
+    Value: !If
+      - HasSlack
+      - 'In the private channel, add the regional app and send: @AWS DevOps Agent - <Region> setup'
+      - 'Register Slack from this Agent Space in the console, then update the stack with the four Slack parameters'

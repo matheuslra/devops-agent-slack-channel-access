@@ -1,0 +1,3 @@
+{
+  "app": "npx tsc && npx tsx bin/app.ts"
+}

@@ -1,6 +1,6 @@
 # Chat with AWS DevOps Agent from Slack, through a role you control
 
-Sample code for the blog post [The DevOps Agent Just Joined Your On-Call Channel](https://matheusarrais.com/blog/devops-agent-slack-channel-access/).
+Sample code for the blog post [AWS DevOps Agent Now Takes Questions in Your Incident Channel](https://matheusarrais.com/blog/devops-agent-slack-channel-access/).
 
 Since September 2026, AWS DevOps Agent can hold a conversation in a private Slack channel. You mention the app, and it starts and steers investigations, answers questions about resources, metrics, alarms and deployments, and replies in a thread. Everyone in that channel drives the agent through one IAM role, and who's in the channel is decided in Slack. This repo sets up an Agent Space that monitors one account, plus a two-way Slack channel whose role you define in code. By default that role can chat and nothing else.
 

@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  Sample for "The DevOps Agent Just Joined Your On-Call Channel" (matheusarrais.com).
+  Sample for "AWS DevOps Agent Now Takes Questions in Your Incident Channel" (matheusarrais.com).
   An AWS DevOps Agent Space that monitors this account, and a private Slack channel that chats with it
   through an IAM role you control.
 
